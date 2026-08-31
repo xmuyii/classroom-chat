@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room One</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="gate">
+  <div class="gate-intro">
+    <div class="display">Room&nbsp;One</div>
+    <p>A quiet place for class 1. One group chat, private messages between classmates, and nothing follows you in from the outside — no email, no phone number, just a username and a set of recovery codes only you hold.</p>
+  </div>
+
+  <div class="gate-form-side">
+    <!-- LOGIN -->
+    <div class="gate-form" id="view-login">
+      <h2>Log in</h2>
+      <div class="sub">Enter the room.</div>
+      <form id="login-form">
+        <div class="field">
+          <label for="login-username">Username</label>
+          <input id="login-username" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="error-text" id="login-error"></div>
+        <button class="primary" type="submit">Log in</button>
+      </form>
+      <div class="gate-links">
+        <button class="quiet" id="to-register">New here? Create an account</button>
+        <button class="quiet" id="to-recover">Forgot your password?</button>
+      </div>
+    </div>
+
+    <!-- REGISTER -->
+    <div class="gate-form" id="view-register" hidden>
+      <h2>Create an account</h2>
+      <div class="sub">Pick a username — this room doesn't ask for anything else.</div>
+      <form id="register-form">
+        <div class="field">
+          <label for="reg-username">Username</label>
+          <input id="reg-username" name="username" autocomplete="username" required>
+          <div class="hint-text">3–24 characters: letters, numbers, _ . -</div>
+        </div>
+        <div class="field">
+          <label for="reg-password">Password</label>
+          <input id="reg-password" name="password" type="password" autocomplete="new-password" required>
+          <div class="hint-text">At least 8 characters.</div>
+        </div>
+        <div class="error-text" id="register-error"></div>
+        <button class="primary" type="submit">Create account</button>
+      </form>
+      <div class="gate-links">
+        <button class="quiet" id="register-to-login">Already have an account? Log in</button>
+        <span></span>
+      </div>
+    </div>
+
+    <!-- RECOVERY CODES DISPLAY (after register) -->
+    <div class="gate-form" id="view-codes" hidden>
+      <h2>Save your recovery codes</h2>
+      <div class="sub">If you forget your password, one of these codes lets you set a new one. They're shown once — nobody, including an admin, can show them to you again if you lose them.</div>
+      <div class="code-grid" id="codes-grid"></div>
+      <label class="confirm-row">
+        <input type="checkbox" id="codes-confirm" style="width:auto;margin-top:2px;">
+        <span>I've saved these codes somewhere safe.</span>
+      </label>
+      <button class="primary" id="codes-continue" style="width:100%;margin-top:16px;" disabled>Continue to Room One</button>
+    </div>
+
+    <!-- RECOVER PASSWORD -->
+    <div class="gate-form" id="view-recover" hidden>
+      <h2>Reset your password</h2>
+      <div class="sub">Enter your username, one unused recovery code, and a new password.</div>
+      <form id="recover-form">
+        <div class="field">
+          <label for="rec-username">Username</label>
+          <input id="rec-username" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="rec-code">Recovery code</label>
+          <input id="rec-code" name="code" placeholder="XXXXX-XXXXX" required>
+        </div>
+        <div class="field">
+          <label for="rec-password">New password</label>
+          <input id="rec-password" name="newPassword" type="password" autocomplete="new-password" required>
+        </div>
+        <div class="error-text" id="recover-error"></div>
+        <div class="hint-text" id="recover-success" style="color:var(--yellow);margin-bottom:10px;"></div>
+        <button class="primary" type="submit">Reset password</button>
+      </form>
+      <div class="gate-links">
+        <button class="quiet" id="recover-to-login">Back to log in</button>
+        <span></span>
+      </div>
+      <hr class="hairline">
+      <div class="hint-text">Lost your codes too? Ask an admin or teacher to reset your password directly — they can do this in person, no code needed.</div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/gate.js"></script>
+</body>
+</html>
