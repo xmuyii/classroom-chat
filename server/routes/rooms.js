@@ -20,8 +20,14 @@ async function isMember(roomId, userId) {
 //    globally visible, so this list stays scoped to membership as before).
 router.get('/', requireAuth, async (req, res) => {
   const { rows: groupRooms } = await db.query(
-    `SELECT r.id, r.name,
-            EXISTS(SELECT 1 FROM room_members rm WHERE rm.room_id = r.id AND rm.user_id = $1) AS is_member
+    `SELECT r.id, r.name, r.description,
+            EXISTS(SELECT 1 FROM room_members rm WHERE rm.room_id = r.id AND rm.user_id = $1) AS is_member,
+            (
+              SELECT MAX(m.id) > COALESCE(
+                (SELECT rc.last_message_id FROM read_cursors rc WHERE rc.room_id = r.id AND rc.user_id = $1), 0
+              )
+              FROM messages m WHERE m.room_id = r.id
+            ) AS has_unread
      FROM rooms r
      WHERE r.type = 'group'
      ORDER BY r.name`,
@@ -29,7 +35,14 @@ router.get('/', requireAuth, async (req, res) => {
   );
 
   const { rows: dmRoomRows } = await db.query(
-    `SELECT r.id FROM rooms r
+    `SELECT r.id,
+            (
+              SELECT MAX(m.id) > COALESCE(
+                (SELECT rc.last_message_id FROM read_cursors rc WHERE rc.room_id = r.id AND rc.user_id = $1), 0
+              )
+              FROM messages m WHERE m.room_id = r.id
+            ) AS has_unread
+     FROM rooms r
      JOIN room_members rm ON rm.room_id = r.id
      WHERE rm.user_id = $1 AND r.type = 'dm'`,
     [req.session.userId]
@@ -44,11 +57,17 @@ router.get('/', requireAuth, async (req, res) => {
        WHERE rm.room_id = $1 AND rm.user_id != $2`,
       [room.id, req.session.userId]
     );
-    dmRooms.push({ id: room.id, name: others[0] ? others[0].username : 'Unknown' });
+    dmRooms.push({ id: room.id, name: others[0] ? others[0].username : 'Unknown', hasUnread: !!room.has_unread });
   }
 
   res.json({
-    groupRooms: groupRooms.map((r) => ({ id: r.id, name: r.name, isMember: r.is_member })),
+    groupRooms: groupRooms.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      isMember: r.is_member,
+      hasUnread: r.is_member && !!r.has_unread,
+    })),
     dmRooms,
   });
 });

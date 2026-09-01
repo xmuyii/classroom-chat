@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS rooms (
   type       TEXT NOT NULL CHECK (type IN ('group', 'dm')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Optional pinned project brief/topic, shown at the top of a group room.
+-- Added via ALTER (not the CREATE TABLE above) so it applies to databases
+-- that already exist from before this column was introduced.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS description TEXT;
 
 CREATE TABLE IF NOT EXISTS room_members (
   room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

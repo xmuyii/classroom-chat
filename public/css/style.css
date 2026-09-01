@@ -276,13 +276,6 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   background: rgba(232,184,75,0.07);
 }
 
-.nav-item .dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--coral);
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
 .sidebar-footer {
   margin-top: auto;
   padding: 14px 20px 0;
@@ -477,6 +470,95 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   padding: 3px 8px;
   font-size: 12px;
 }
+
+.conn-status {
+  padding: 0 24px 8px;
+  font-size: 12.5px;
+  color: var(--coral);
+}
+
+.room-topic {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-muted);
+  border-left: 2px solid var(--yellow);
+  padding-left: 8px;
+  max-width: 56ch;
+}
+
+.member-quick-add {
+  padding: 0 18px 12px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 8px;
+}
+.member-quick-add input { margin-bottom: 6px; }
+.member-quick-add button { width: 100%; padding: 8px; }
+
+.pref-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.nav-item .dot {
+  display: none;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--coral);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.nav-item.unread .dot { display: block; }
+.nav-item.locked .dot { display: none; }
+
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,14,12,0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+
+.onboarding-card {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  max-width: 420px;
+  width: 100%;
+  padding: 28px;
+}
+
+.onboarding-step .display {
+  font-size: 22px;
+  margin: 0 0 10px;
+}
+.onboarding-step p {
+  color: var(--ink-muted);
+  font-size: 14.5px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.onboarding-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24px;
+}
+
+.onboarding-dots {
+  display: flex;
+  gap: 6px;
+}
+.onboarding-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--hairline);
+}
+.onboarding-dots span.active { background: var(--yellow); }
 
 .toast {
   position: fixed;

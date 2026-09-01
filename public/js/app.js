@@ -1,9 +1,11 @@
 let me = null;
-let groupRooms = []; // [{id, name, isMember}]
-let dmRooms = [];    // [{id, name}]
+let groupRooms = []; // [{id, name, description, isMember, hasUnread}]
+let dmRooms = [];    // [{id, name, hasUnread}]
 let currentRoomId = null;
 let currentRoomIsMember = false;
 let ws = null;
+let wsConnected = false;
+let reconnectTimer = null;
 let typingTimeout = null;
 
 async function api(url, opts = {}) {
@@ -49,10 +51,39 @@ async function boot() {
     document.getElementById('admin-rooms-section').hidden = false;
   }
 
+  loadPrefs();
   await loadRooms();
   connectWS();
   wireStaticUI();
+  maybeShowOnboarding();
 }
+
+/* ---------------- Preferences (local, per-browser) ---------------- */
+
+function loadPrefs() {
+  const soundOn = localStorage.getItem('pref_sound') === '1';
+  document.getElementById('pref-sound').checked = soundOn;
+}
+
+function playPingSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 720;
+    gain.gain.setValueAtTime(0.06, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch {
+    // Audio isn't available in every context (e.g. before any user
+    // interaction on some browsers) — failing silently is fine here.
+  }
+}
+
+/* ---------------- Rooms & sidebar ---------------- */
 
 async function loadRooms() {
   const data = await api('/api/rooms');
@@ -70,23 +101,32 @@ function renderNav() {
   groupLabel.textContent = 'Group chats';
   navGroup.appendChild(groupLabel);
 
-  for (const room of groupRooms) navGroup.appendChild(navItem(room.id, room.name, !room.isMember));
+  for (const room of groupRooms) {
+    navGroup.appendChild(navItem(room.id, room.name, !room.isMember, room.isMember && room.hasUnread));
+  }
 
   const dmLabel = document.createElement('div');
   dmLabel.className = 'nav-group';
   dmLabel.textContent = 'Personal messages';
   navGroup.appendChild(dmLabel);
 
-  for (const dm of dmRooms) navGroup.appendChild(navItem(dm.id, dm.name, false));
+  for (const dm of dmRooms) navGroup.appendChild(navItem(dm.id, dm.name, false, dm.hasUnread));
 
   navGroup.appendChild(newDmItem());
 }
 
-function navItem(roomId, label, locked) {
+function navItem(roomId, label, locked, unread) {
   const el = document.createElement('div');
-  el.className = `nav-item${locked ? ' locked' : ''}`;
+  el.className = `nav-item${locked ? ' locked' : ''}${unread ? ' unread' : ''}`;
   el.dataset.room = roomId;
-  el.textContent = label;
+  const text = document.createElement('span');
+  text.textContent = label;
+  el.appendChild(text);
+  if (unread && !locked) {
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    el.appendChild(dot);
+  }
   if (roomId === currentRoomId) el.classList.add('active');
   el.onclick = () => selectRoom(roomId);
   return el;
@@ -138,6 +178,14 @@ async function selectRoom(roomId) {
   const room = group || dm;
   document.getElementById('room-title').textContent = room ? room.name : '';
 
+  const topicEl = document.getElementById('room-topic');
+  if (group && group.description) {
+    topicEl.textContent = group.description;
+    topicEl.hidden = false;
+  } else {
+    topicEl.hidden = true;
+  }
+
   if (group && !group.isMember) {
     currentRoomIsMember = false;
     document.getElementById('room-sub').textContent = '';
@@ -160,13 +208,17 @@ async function selectRoom(roomId) {
   document.getElementById('members-btn').hidden = !group;
   document.getElementById('messages').innerHTML = '';
 
+  // Opening a room counts as reading it — clear its unread dot right away.
+  if (group) group.hasUnread = false;
+  if (dm) dm.hasUnread = false;
+  renderNav();
+
   try {
     const data = await api(`/api/rooms/${roomId}/messages`);
     for (const m of data.messages) appendMessage(roomId, m);
     scrollToBottom();
   } catch (err) {
     if (err.code === 'not_a_member') {
-      // Membership state was stale client-side (e.g. just removed) \u2014 refresh and retry the render.
       await loadRooms();
       selectRoom(roomId);
     } else {
@@ -227,6 +279,11 @@ function appendMessage(roomId, m) {
   }
 
   container.appendChild(row);
+
+  if (!mine) {
+    const soundOn = localStorage.getItem('pref_sound') === '1';
+    if (soundOn) playPingSound();
+  }
 }
 
 function removeMessage(roomId, id) {
@@ -235,21 +292,38 @@ function removeMessage(roomId, id) {
   if (row) row.remove();
 }
 
+/* ---------------- WebSocket: connection, heartbeat-aware UI ---------------- */
+
+function setConnected(connected) {
+  wsConnected = connected;
+  document.getElementById('conn-status').hidden = connected;
+  const sendBtn = document.getElementById('send-btn');
+  if (sendBtn) sendBtn.disabled = !connected;
+}
+
 function connectWS() {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${window.location.host}`);
+
+  ws.onopen = () => {
+    setConnected(true);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  };
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === 'backlog') {
       for (const m of msg.messages) appendMessage(msg.roomId, m);
       scrollToBottom();
+      markUnreadIfNotCurrent(msg.roomId);
     } else if (msg.type === 'message') {
       appendMessage(msg.roomId, msg.message);
       scrollToBottom();
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ack', roomId: msg.roomId, messageId: msg.message.id }));
       }
+      markUnreadIfNotCurrent(msg.roomId);
     } else if (msg.type === 'messages_deleted') {
       for (const id of msg.ids) removeMessage(msg.roomId, id);
     } else if (msg.type === 'typing') {
@@ -257,7 +331,7 @@ function connectWS() {
     } else if (msg.type === 'room_added') {
       const existing = findGroupRoom(msg.room.id);
       if (existing) existing.isMember = true;
-      else groupRooms.push({ id: msg.room.id, name: msg.room.name, isMember: true });
+      else groupRooms.push({ id: msg.room.id, name: msg.room.name, isMember: true, hasUnread: false });
       renderNav();
       toast(`You were added to ${msg.room.name}.`);
       if (currentRoomId === msg.room.id) selectRoom(currentRoomId);
@@ -270,9 +344,45 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    setTimeout(connectWS, 1500); // simple reconnect; catch-up handles any gap
+    setConnected(false);
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    // onclose fires right after in virtually all browsers; scheduling here
+    // too (idempotent via the timer guard) covers the rare case it doesn't.
+    setConnected(false);
+    scheduleReconnect();
   };
 }
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS();
+  }, 1500);
+}
+
+function markUnreadIfNotCurrent(roomId) {
+  if (roomId === currentRoomId) return;
+  const group = findGroupRoom(roomId);
+  const dm = findDmRoom(roomId);
+  if (group) group.hasUnread = true;
+  if (dm) dm.hasUnread = true;
+  renderNav();
+}
+
+// A laptop coming back from sleep, or a tab regaining focus after a long
+// time backgrounded, is exactly when a stale connection is most likely —
+// nudge a reconnect immediately instead of waiting for the next heartbeat.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    connectWS();
+  }
+});
 
 function showTyping(roomId, username) {
   if (roomId !== currentRoomId) return;
@@ -282,6 +392,8 @@ function showTyping(roomId, username) {
   el._t = setTimeout(() => { el.textContent = ''; }, 2500);
 }
 
+/* ---------------- Static UI wiring ---------------- */
+
 function wireStaticUI() {
   document.getElementById('nav-settings').onclick = openSettings;
   document.getElementById('logout-btn').onclick = async () => {
@@ -289,31 +401,49 @@ function wireStaticUI() {
     window.location.href = '/';
   };
 
-  document.getElementById('members-btn').onclick = async () => {
-    if (!currentRoomId || !currentRoomIsMember) return;
-    try {
-      const data = await api(`/api/rooms/${currentRoomId}/members`);
-      const list = document.getElementById('member-list');
-      list.innerHTML = '';
-      for (const m of data.members) {
-        const row = document.createElement('div');
-        row.className = `member-row ${m.username === me.username ? 'you' : ''}`;
-        row.textContent = m.username === me.username ? `${m.username} (you)` : m.username;
-        list.appendChild(row);
-      }
-      document.getElementById('member-panel').hidden = false;
-    } catch (err) {
-      toast(err.message);
-    }
-  };
+  document.getElementById('pref-sound').addEventListener('change', (e) => {
+    localStorage.setItem('pref_sound', e.target.checked ? '1' : '0');
+  });
+
+  document.getElementById('replay-tour-btn').onclick = () => showOnboarding();
+
+  document.getElementById('members-btn').onclick = openMemberPanel;
   document.getElementById('close-members-btn').onclick = () => {
     document.getElementById('member-panel').hidden = true;
+  };
+
+  document.getElementById('quick-add-btn').onclick = async () => {
+    const errEl = document.getElementById('quick-add-error');
+    errEl.textContent = '';
+    const input = document.getElementById('quick-add-username');
+    const username = input.value.trim();
+    if (!username || !currentRoomId) return;
+    try {
+      await api(`/api/admin/rooms/${currentRoomId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      });
+      input.value = '';
+      toast(`Added ${username}.`);
+      await openMemberPanel();
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
   };
 
   const input = document.getElementById('msg-input');
   const send = () => {
     const text = input.value.trim();
-    if (!text || !currentRoomId || !currentRoomIsMember || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!text || !currentRoomId || !currentRoomIsMember) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      toast('Not connected \u2014 reconnecting, try again in a moment.');
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        connectWS();
+      }
+      return;
+    }
     ws.send(JSON.stringify({ type: 'chat', roomId: currentRoomId, body: text }));
     input.value = '';
     input.style.height = 'auto';
@@ -352,6 +482,36 @@ function wireStaticUI() {
 
   if (me.isAdmin) wireAdminPanel();
 }
+
+async function openMemberPanel() {
+  if (!currentRoomId || !currentRoomIsMember) return;
+  const group = findGroupRoom(currentRoomId);
+  const quickAdd = document.getElementById('member-quick-add');
+  quickAdd.hidden = !(me.isAdmin && group);
+  document.getElementById('quick-add-username').value = '';
+  document.getElementById('quick-add-error').textContent = '';
+
+  try {
+    // Admins use the admin endpoint so this always works even for a room
+    // they manage but might not personally be chatting in.
+    const data = me.isAdmin
+      ? await api(`/api/admin/rooms/${currentRoomId}/members`)
+      : await api(`/api/rooms/${currentRoomId}/members`);
+    const list = document.getElementById('member-list');
+    list.innerHTML = '';
+    for (const m of data.members) {
+      const row = document.createElement('div');
+      row.className = `member-row ${m.username === me.username ? 'you' : ''}`;
+      row.textContent = m.username === me.username ? `${m.username} (you)` : m.username;
+      list.appendChild(row);
+    }
+    document.getElementById('member-panel').hidden = false;
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+/* ---------------- Settings / admin ---------------- */
 
 async function refreshRemainingCount() {
   const data = await api('/api/auth/me');
@@ -441,8 +601,24 @@ async function wireAdminPanel() {
     }
   };
 
+  document.getElementById('save-topic-btn').onclick = async () => {
+    const roomId = document.getElementById('admin-room-select').value;
+    if (!roomId) return;
+    const description = document.getElementById('room-topic-input').value.trim();
+    try {
+      await api(`/api/admin/rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify({ description }) });
+      toast('Topic saved.');
+      await loadRooms();
+      if (currentRoomId === roomId) selectRoom(roomId);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+
   document.getElementById('admin-room-select').addEventListener('change', (e) => {
     renderRoomMemberList(e.target.value);
+    const room = findGroupRoom(e.target.value);
+    document.getElementById('room-topic-input').value = (room && room.description) || '';
   });
 }
 
@@ -462,7 +638,11 @@ async function refreshAdminRoomPickers() {
   const userSelect = document.getElementById('admin-add-user-select');
   userSelect.innerHTML = usersData.users.map((u) => `<option value="${u.username}">${u.username}</option>`).join('');
 
-  if (roomSelect.value) await renderRoomMemberList(roomSelect.value);
+  if (roomSelect.value) {
+    await renderRoomMemberList(roomSelect.value);
+    const room = findGroupRoom(roomSelect.value);
+    document.getElementById('room-topic-input').value = (room && room.description) || '';
+  }
 }
 
 async function renderRoomMemberList(roomId) {
@@ -496,6 +676,66 @@ async function renderRoomMemberList(roomId) {
     row.appendChild(removeBtn);
     container.appendChild(row);
   }
+}
+
+/* ---------------- Onboarding tour ---------------- */
+
+const ONBOARDING_STEPS = [
+  {
+    title: 'Welcome to Room One',
+    body: 'This is where the class works together \u2014 group discussion, questions, and building projects as a team. A quick look around before you dive in.',
+  },
+  {
+    title: 'Group chats',
+    body: 'Each class or project has its own room, listed on the left. Messages in a group room disappear after 9 days automatically \u2014 tap the star on any message to keep it around longer, which is handy for pinning project notes or decisions.',
+  },
+  {
+    title: 'Personal messages',
+    body: 'Need to talk to one classmate directly? Start a personal message from the sidebar. Those are private and never expire.',
+  },
+  {
+    title: 'Recovery codes',
+    body: 'There\u2019s no email or phone number on this platform \u2014 if you forget your password, one of your recovery codes gets you back in. Find them anytime in Settings, and keep them somewhere safe.',
+  },
+];
+
+function maybeShowOnboarding() {
+  const key = `onboarding_seen_v1_${me.id}`;
+  if (!localStorage.getItem(key)) showOnboarding();
+}
+
+function showOnboarding() {
+  let step = 0;
+  const overlay = document.getElementById('onboarding-overlay');
+  const stepEl = document.getElementById('onboarding-step');
+  const dotsEl = document.getElementById('onboarding-dots');
+  const nextBtn = document.getElementById('onboarding-next');
+  const skipBtn = document.getElementById('onboarding-skip');
+
+  function render() {
+    const s = ONBOARDING_STEPS[step];
+    stepEl.innerHTML = `<div class="display">${s.title}</div><p>${s.body}</p>`;
+    dotsEl.innerHTML = ONBOARDING_STEPS.map((_, i) => `<span class="${i === step ? 'active' : ''}"></span>`).join('');
+    nextBtn.textContent = step === ONBOARDING_STEPS.length - 1 ? 'Done' : 'Next';
+  }
+
+  function finish() {
+    localStorage.setItem(`onboarding_seen_v1_${me.id}`, '1');
+    overlay.hidden = true;
+    nextBtn.onclick = null;
+    skipBtn.onclick = null;
+  }
+
+  nextBtn.onclick = () => {
+    if (step === ONBOARDING_STEPS.length - 1) { finish(); return; }
+    step += 1;
+    render();
+  };
+  skipBtn.onclick = finish;
+
+  step = 0;
+  render();
+  overlay.hidden = false;
 }
 
 boot();

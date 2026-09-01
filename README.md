@@ -90,6 +90,37 @@ means WebSocket connections drop silently and the hourly sweeper won't run on
 schedule. This is worth checking directly against Railway's docs since plan
 behavior changes over time.
 
+## What changed after the first classroom test
+
+- **Fixed: messages not sending until reload.** Railway's proxy (like most)
+  silently drops idle WebSocket connections without telling either side —
+  the browser still reported `OPEN` on a dead socket, so sends just vanished
+  with no feedback. `server/ws.js` now runs a 30s ping/pong heartbeat and
+  terminates anything that stops responding, which triggers a real close
+  event and the client's existing reconnect logic. The client also now shows
+  a "Reconnecting…" indicator instead of failing silently, retries
+  immediately on send if disconnected, and reconnects right away when a tab
+  regains focus (covers laptops waking from sleep).
+- **Quick-add from inside the room.** Opening "View members" in any group
+  room now shows an inline add-by-username field for admins — no detour
+  through Settings for the common case of adding one more student.
+- **Unread dots.** Rooms and DMs with unread messages show a small dot in
+  the sidebar, using the same server-side read-cursor tracking already built
+  for missed-message catch-up.
+- **Pinned room topic.** Admins can set a short project brief per room
+  (Settings → rooms & classes), shown under the room title — a place to pin
+  what the class or project team is currently working on.
+- **Skippable onboarding.** New accounts see a short 4-step tour on first
+  login (group chat vs. personal messages, the 9-day/save behavior, and
+  recovery codes) — dismissible anytime, and replayable from Settings.
+- **Chat sound preference.** A per-browser toggle in Settings plays a short
+  tone on incoming messages — stored in `localStorage`, not synced across
+  devices by design (it's a local notification preference, not account data).
+
+If you already have a deployed database, no manual migration step is
+needed — `schema.sql`'s `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` runs
+automatically on next boot and is safe against an existing `rooms` table.
+
 ## Rooms, classes, and members
 
 - Any admin can create additional group rooms (Settings → "Admin: rooms &

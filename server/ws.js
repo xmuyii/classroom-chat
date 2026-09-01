@@ -127,7 +127,29 @@ function attachWebSocketServer(server, sessionParser) {
     });
   });
 
+  // Heartbeat: proxies (Railway's included) silently drop idle WebSocket
+  // connections without sending either side a close frame. Without this,
+  // readyState stays OPEN on a dead socket forever and sends just vanish.
+  // Pinging every 30s and terminating anything that didn't pong back forces
+  // a real close event, which triggers the client's reconnect logic.
+  const HEARTBEAT_MS = 30000;
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+  });
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, HEARTBEAT_MS);
+  wss.on('close', () => clearInterval(heartbeat));
+
   wss.on('connection', async (ws, req) => {
+    ws.on('pong', () => { ws.isAlive = true; });
     const userId = req.session.userId;
     const username = req.session.username;
     const myEntries = new Map(); // roomId -> entry

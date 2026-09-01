@@ -80,4 +80,16 @@ router.delete('/rooms/:roomId/members/:username', requireAuth, requireAdmin, asy
   res.json({ ok: true });
 });
 
+// Set (or clear) a room's pinned project topic/brief.
+router.patch('/rooms/:roomId', requireAuth, requireAdmin, async (req, res) => {
+  const { roomId } = req.params;
+  const { description } = req.body || {};
+  const { rows } = await db.query(
+    "UPDATE rooms SET description = $1 WHERE id = $2 AND type = 'group' RETURNING id, name, description",
+    [description ? description.trim().slice(0, 300) : null, roomId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'No such room.' });
+  res.json({ room: rows[0] });
+});
+
 module.exports = router;
