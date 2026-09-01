@@ -4,6 +4,11 @@ const db = require('./db');
 // room_id -> Set of { ws, userId, username }
 const roomSockets = new Map();
 
+// user_id -> Set of { ws, username, myEntries } — lets admin actions push
+// live updates (e.g. "you were just added to a room") to a user's open
+// connection(s) without waiting for them to refresh.
+const userConnections = new Map();
+
 function addSocket(roomId, entry) {
   if (!roomSockets.has(roomId)) roomSockets.set(roomId, new Set());
   roomSockets.get(roomId).add(entry);
@@ -35,6 +40,38 @@ function notifyDeleted(deletedRows) {
   }
   for (const [roomId, ids] of byRoom) {
     broadcast(roomId, { type: 'messages_deleted', roomId, ids });
+  }
+}
+
+// Called by the admin "add member" route. Subscribes any currently-open
+// sockets for that user to the new room's live fan-out, and tells the
+// client so it can update its sidebar without a page reload.
+function notifyRoomMembershipAdded(userId, room) {
+  const conns = userConnections.get(userId);
+  if (!conns) return; // user isn't currently connected — they'll pick it up on next login/reconnect
+  for (const conn of conns) {
+    const entry = { ws: conn.ws, userId, username: conn.username };
+    addSocket(room.id, entry);
+    conn.myEntries.set(room.id, entry);
+    if (conn.ws.readyState === conn.ws.OPEN) {
+      conn.ws.send(JSON.stringify({ type: 'room_added', room: { id: room.id, name: room.name, type: 'group' } }));
+    }
+  }
+}
+
+// Called by the admin "remove member" route. Mirror of the above.
+function notifyRoomMembershipRemoved(userId, roomId) {
+  const conns = userConnections.get(userId);
+  if (!conns) return;
+  for (const conn of conns) {
+    const entry = conn.myEntries.get(roomId);
+    if (entry) {
+      removeSocket(roomId, entry);
+      conn.myEntries.delete(roomId);
+    }
+    if (conn.ws.readyState === conn.ws.OPEN) {
+      conn.ws.send(JSON.stringify({ type: 'room_removed', roomId }));
+    }
   }
 }
 
@@ -94,6 +131,10 @@ function attachWebSocketServer(server, sessionParser) {
     const userId = req.session.userId;
     const username = req.session.username;
     const myEntries = new Map(); // roomId -> entry
+
+    const conn = { ws, username, myEntries };
+    if (!userConnections.has(userId)) userConnections.set(userId, new Set());
+    userConnections.get(userId).add(conn);
 
     let roomIds;
     try {
@@ -169,10 +210,18 @@ function attachWebSocketServer(server, sessionParser) {
 
     ws.on('close', () => {
       for (const [roomId, entry] of myEntries) removeSocket(roomId, entry);
+      const conns = userConnections.get(userId);
+      if (conns) {
+        conns.delete(conn);
+        if (conns.size === 0) userConnections.delete(userId);
+      }
     });
   });
-
-  return { notifyDeleted };
 }
 
-module.exports = { attachWebSocketServer };
+module.exports = {
+  attachWebSocketServer,
+  notifyDeleted,
+  notifyRoomMembershipAdded,
+  notifyRoomMembershipRemoved,
+};

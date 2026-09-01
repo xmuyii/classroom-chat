@@ -417,6 +417,67 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
 }
 .admin-row select, .admin-row input { flex: 1; }
 
+.nav-item.locked {
+  cursor: pointer;
+  opacity: 0.55;
+}
+.nav-item.locked::after {
+  content: "locked";
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.access-denied {
+  margin: auto;
+  text-align: center;
+  color: var(--ink-muted);
+  max-width: 34ch;
+}
+.access-denied .display { font-size: 22px; color: var(--ink); margin-bottom: 8px; }
+
+.member-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 260px;
+  background: var(--panel);
+  border-left: 1px solid var(--hairline);
+  padding: 16px 0;
+  overflow-y: auto;
+  z-index: 10;
+}
+.member-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 18px 12px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--ink-muted);
+}
+.member-row {
+  padding: 7px 18px;
+  font-size: 14px;
+}
+.member-row.you { color: var(--yellow); }
+
+.room-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13.5px;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--hairline);
+}
+.room-member-row button {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;

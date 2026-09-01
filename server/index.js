@@ -9,7 +9,8 @@ const db = require('./db');
 const migrate = require('./migrate');
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
-const { attachWebSocketServer } = require('./ws');
+const adminRoutes = require('./routes/admin');
+const { attachWebSocketServer, notifyDeleted } = require('./ws');
 const { startSweeper } = require('./sweeper');
 
 const PORT = process.env.PORT || 3000;
@@ -37,13 +38,14 @@ async function main() {
 
   app.use('/api/auth', authRoutes);
   app.use('/api/rooms', roomRoutes);
+  app.use('/api/admin', adminRoutes);
 
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   app.get('/health', (req, res) => res.json({ ok: true }));
 
   const server = http.createServer(app);
-  const { notifyDeleted } = attachWebSocketServer(server, sessionParser);
+  attachWebSocketServer(server, sessionParser);
 
   startSweeper(notifyDeleted);
 

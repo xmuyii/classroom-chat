@@ -7,6 +7,11 @@ const rateLimit = require('../rateLimit');
 
 const router = express.Router();
 const limiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8 });
+// Registration is intentionally looser than login/recovery: a classroom sits
+// behind one shared school IP, and account creation isn't the sensitive path
+// those two are (worst case of abuse here is spam accounts, which an admin
+// can just delete).
+const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 40 });
 
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
 
@@ -21,7 +26,7 @@ function validCredentials(username, password) {
 
 // --- Register ---------------------------------------------------------
 // First account created becomes admin (bootstrap for a fresh deployment).
-router.post('/register', limiter((req) => `reg:${req.ip}`), async (req, res) => {
+router.post('/register', registerLimiter((req) => `reg:${req.ip}`), async (req, res) => {
   const { username, password } = req.body || {};
   const err = validCredentials(username, password);
   if (err) return res.status(400).json({ error: err });
@@ -41,13 +46,20 @@ router.post('/register', limiter((req) => `reg:${req.ip}`), async (req, res) => 
   );
   const user = rows[0];
 
-  // Auto-join the one group room.
-  const { rows: groupRows } = await db.query("SELECT id FROM rooms WHERE type = 'group' LIMIT 1");
-  if (groupRows.length) {
-    await db.query(
-      'INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [groupRows[0].id, user.id]
-    );
+  // No auto-join: with multiple rooms/classes now supported, an admin
+  // explicitly adds each new account to the right room(s) — see
+  // POST /api/admin/rooms/:roomId/members. The first (admin) account is the
+  // exception: give them every existing group room so they can manage things
+  // immediately without a chicken-and-egg membership problem.
+  if (isFirstUser) {
+    const { rows: allGroupRooms } = await db.query("SELECT id FROM rooms WHERE type = 'group'");
+    for (const room of allGroupRooms) {
+      // eslint-disable-next-line no-await-in-loop
+      await db.query(
+        'INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [room.id, user.id]
+      );
+    }
   }
 
   const codes = await generateCodes(user.id);

@@ -90,6 +90,27 @@ means WebSocket connections drop silently and the hourly sweeper won't run on
 schedule. This is worth checking directly against Railway's docs since plan
 behavior changes over time.
 
+## Rooms, classes, and members
+
+- Any admin can create additional group rooms (Settings → "Admin: rooms &
+  classes") — one per class. Every room name is visible to everyone in the
+  sidebar; opening one you're not a member of shows an access-denied screen
+  instead of the chat.
+- Admins add/remove specific students per room from the same panel. A student
+  who's currently online gets pushed straight into the room over their open
+  WebSocket connection — no refresh needed. One who isn't online picks up the
+  new room automatically on next login.
+- Inside any group room, "View members" in the header lists who's currently
+  in it. Only members of a room can see its member list — this is enforced
+  server-side, not just hidden in the UI.
+- The first account registered (the admin) is auto-added to whatever group
+  room(s) already exist at that moment, so there's no chicken-and-egg problem
+  bootstrapping the very first class.
+- Registration's rate limit was raised from the original overly strict
+  setting — a classroom sitting behind one shared school IP was hitting it
+  within a few signups. Login and password-recovery remain tightly rate
+  limited, since those are the actual brute-force-sensitive paths.
+
 ## What's deliberately not built
 
 To match the stated scale (<500 users, one class) and avoid infrastructure

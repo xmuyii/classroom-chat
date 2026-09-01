@@ -29,6 +29,7 @@
         <h2 id="room-title">Choose a room</h2>
         <div class="sub" id="room-sub"></div>
       </div>
+      <button class="quiet" id="members-btn" hidden>View members</button>
     </div>
     <div class="messages" id="messages">
       <div class="empty-state">Pick a room from the left to start reading.</div>
@@ -38,6 +39,14 @@
       <textarea id="msg-input" placeholder="Write a message…" rows="1"></textarea>
       <button class="primary" id="send-btn">Send</button>
     </div>
+  </div>
+
+  <div class="member-panel" id="member-panel" hidden>
+    <div class="member-panel-header">
+      <span>Members</span>
+      <button class="quiet" id="close-members-btn">Close</button>
+    </div>
+    <div id="member-list"></div>
   </div>
 
   <div class="main" id="main-settings" hidden>
@@ -58,6 +67,26 @@
         <h3>Password reset history</h3>
         <div class="desc">If an admin ever resets your password directly, it's logged here.</div>
         <div id="reset-history"></div>
+      </div>
+
+      <div class="settings-section" id="admin-rooms-section" hidden>
+        <h3>Admin: rooms &amp; classes</h3>
+        <div class="desc">Create a room for a new class, then add students to it. Everyone can see a room's name in the sidebar, but only members can open it or see who's in it.</div>
+
+        <div class="admin-row">
+          <input id="new-room-name" placeholder="New room name, e.g. Class 2 group chat">
+          <button id="create-room-btn">Create room</button>
+        </div>
+        <div class="error-text" id="create-room-error"></div>
+
+        <div class="admin-row" style="margin-top:18px;">
+          <select id="admin-room-select"></select>
+          <select id="admin-add-user-select"></select>
+          <button id="add-member-btn">Add</button>
+        </div>
+        <div class="error-text" id="add-member-error"></div>
+
+        <div id="room-member-list" style="margin-top:10px;"></div>
       </div>
 
       <div class="settings-section" id="admin-section" hidden>

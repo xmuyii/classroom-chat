@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware');
 
 const router = express.Router();
 
-async function assertMember(roomId, userId) {
+async function isMember(roomId, userId) {
   const { rows } = await db.query(
     'SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2',
     [roomId, userId]
@@ -12,21 +12,31 @@ async function assertMember(roomId, userId) {
   return rows.length > 0;
 }
 
-// List rooms this user belongs to: the one group room + all their DM rooms,
-// each with the other participant's name for DMs.
+// Room list for the sidebar:
+//  - groupRooms: EVERY group room (class) in the platform, each flagged
+//    isMember — so a teacher's other classes are visible by name but locked
+//    until explicitly added, per the "see it, can't open it" requirement.
+//  - dmRooms: only the user's own DM threads (these were never meant to be
+//    globally visible, so this list stays scoped to membership as before).
 router.get('/', requireAuth, async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT r.id, r.name, r.type
+  const { rows: groupRooms } = await db.query(
+    `SELECT r.id, r.name,
+            EXISTS(SELECT 1 FROM room_members rm WHERE rm.room_id = r.id AND rm.user_id = $1) AS is_member
      FROM rooms r
-     JOIN room_members rm ON rm.room_id = r.id
-     WHERE rm.user_id = $1
-     ORDER BY r.type DESC, r.name`,
+     WHERE r.type = 'group'
+     ORDER BY r.name`,
     [req.session.userId]
   );
 
-  const dmRooms = rows.filter((r) => r.type === 'dm');
-  const dmNames = {};
-  for (const room of dmRooms) {
+  const { rows: dmRoomRows } = await db.query(
+    `SELECT r.id FROM rooms r
+     JOIN room_members rm ON rm.room_id = r.id
+     WHERE rm.user_id = $1 AND r.type = 'dm'`,
+    [req.session.userId]
+  );
+
+  const dmRooms = [];
+  for (const room of dmRoomRows) {
     // eslint-disable-next-line no-await-in-loop
     const { rows: others } = await db.query(
       `SELECT u.username FROM room_members rm
@@ -34,15 +44,12 @@ router.get('/', requireAuth, async (req, res) => {
        WHERE rm.room_id = $1 AND rm.user_id != $2`,
       [room.id, req.session.userId]
     );
-    dmNames[room.id] = others[0] ? others[0].username : 'Unknown';
+    dmRooms.push({ id: room.id, name: others[0] ? others[0].username : 'Unknown' });
   }
 
   res.json({
-    rooms: rows.map((r) => ({
-      id: r.id,
-      type: r.type,
-      name: r.type === 'dm' ? dmNames[r.id] : r.name,
-    })),
+    groupRooms: groupRooms.map((r) => ({ id: r.id, name: r.name, isMember: r.is_member })),
+    dmRooms,
   });
 });
 
@@ -75,10 +82,12 @@ router.post('/dm/:username', requireAuth, async (req, res) => {
 });
 
 // Message history for a room, most recent first (paginated with `before`).
+// Non-members get a distinguishable error code so the client can show an
+// "access denied" state instead of a generic failure toast.
 router.get('/:roomId/messages', requireAuth, async (req, res) => {
   const { roomId } = req.params;
-  if (!(await assertMember(roomId, req.session.userId))) {
-    return res.status(403).json({ error: 'Not a member of this room.' });
+  if (!(await isMember(roomId, req.session.userId))) {
+    return res.status(403).json({ error: 'You do not have access to this room.', code: 'not_a_member' });
   }
   const before = req.query.before ? Number(req.query.before) : null;
   const limit = 50;
@@ -94,11 +103,28 @@ router.get('/:roomId/messages', requireAuth, async (req, res) => {
   res.json({ messages: rows.reverse() });
 });
 
+// List members of a room — only visible to members themselves, so someone
+// outside a room can't see who's in it (matches "see the room exists, but
+// not who's in it unless you're added").
+router.get('/:roomId/members', requireAuth, async (req, res) => {
+  const { roomId } = req.params;
+  if (!(await isMember(roomId, req.session.userId))) {
+    return res.status(403).json({ error: 'You do not have access to this room.', code: 'not_a_member' });
+  }
+  const { rows } = await db.query(
+    `SELECT u.id, u.username FROM room_members rm
+     JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1 ORDER BY u.username`,
+    [roomId]
+  );
+  res.json({ members: rows });
+});
+
 // Toggle the "saved" flag — exempts a group message from the 9-day sweep.
 router.post('/:roomId/messages/:messageId/save', requireAuth, async (req, res) => {
   const { roomId, messageId } = req.params;
-  if (!(await assertMember(roomId, req.session.userId))) {
-    return res.status(403).json({ error: 'Not a member of this room.' });
+  if (!(await isMember(roomId, req.session.userId))) {
+    return res.status(403).json({ error: 'You do not have access to this room.', code: 'not_a_member' });
   }
   const { saved } = req.body || {};
   const { rows } = await db.query(
