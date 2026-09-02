@@ -14,9 +14,13 @@
       <div class="whoami" id="whoami">…</div>
     </div>
 
-    <div id="nav-group"></div>
-
-    <div class="nav-item" data-view="settings" id="nav-settings">Settings</div>
+    <div class="sidebar-scroll">
+      <div id="nav-group"></div>
+      <div class="nav-item" data-view="settings" id="nav-settings">
+        <span>Settings</span>
+        <span class="dot mod-dot" id="settings-dot" hidden></span>
+      </div>
+    </div>
 
     <div class="sidebar-footer">
       <button class="quiet" id="logout-btn">Log out</button>
@@ -83,6 +87,17 @@
         <h3>Password reset history</h3>
         <div class="desc">If an admin ever resets your password directly, it's logged here.</div>
         <div id="reset-history"></div>
+      </div>
+
+      <div class="settings-section" id="moderation-section" hidden>
+        <h3>Moderation</h3>
+        <div class="desc">Messages the word filter caught, and messages a student flagged for your attention.</div>
+
+        <div class="mod-subhead">Awaiting your review</div>
+        <div id="mod-pending-list"><div class="hint-text">Nothing waiting.</div></div>
+
+        <div class="mod-subhead" style="margin-top:18px;">Flagged by students</div>
+        <div id="mod-flagged-list"><div class="hint-text">Nothing flagged.</div></div>
       </div>
 
       <div class="settings-section" id="admin-rooms-section" hidden>

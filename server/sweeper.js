@@ -14,6 +14,7 @@ async function sweepOnce() {
        JOIN rooms r ON r.id = m.room_id
        WHERE r.type = 'group'
          AND m.saved = FALSE
+         AND m.status = 'visible'
          AND m.created_at < now() - ($1 || ' days')::interval
      )
      RETURNING id, room_id`,

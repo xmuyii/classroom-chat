@@ -142,6 +142,45 @@ automatically on next boot and is safe against an existing `rooms` table.
   within a few signups. Login and password-recovery remain tightly rate
   limited, since those are the actual brute-force-sensitive paths.
 
+## Moderation
+
+A full "hold every message for approval" model would turn the whole chat
+into an approval queue and defeat the point of real-time collaboration — so
+that isn't what's built. Instead:
+
+- **Word filter (automatic).** Messages matching a profanity filter
+  (`server/moderation.js`, using the `bad-words` package) are held —
+  `status = 'pending'` — and only the sender sees their own copy, marked
+  "Awaiting review." Nobody else in the room sees it until an admin approves
+  or rejects it from Settings → Moderation. Everything else still sends
+  instantly, same as before. Edit `server/moderation.js` to add or remove
+  words for your class.
+- **Flag to teacher (manual).** Any student can flag a message they've
+  already seen — a small "report to teacher" link under each group message
+  (not shown on your own messages). Flagging doesn't hide the message; it
+  surfaces it in Settings → Moderation → "Flagged by students" for you to
+  dismiss or delete.
+- **Instant delete (admin).** Every group message has a small "delete" link
+  visible only to admins — removes it for everyone immediately, live, no
+  detour through Settings required.
+- Both queues push a small dot on the Settings nav item and a toast the
+  moment something needs attention, if you're online.
+- **Known limitation:** a message approved after being held could, in a rare
+  timing edge case, be skipped by another student's missed-message catch-up
+  if they were offline the whole time between it being sent and approved.
+  Live-connected users and anyone opening the room fresh both see it
+  correctly — this only affects the reconnect-catch-up path, and only if
+  review happens slowly. Not worth the added complexity to close given the
+  scale this is built for; flagging it here in case it ever matters.
+
+## Scroll fix
+
+Earlier the whole page (sidebar included) scrolled together when reading a
+long message list — a missing CSS containment rule let scroll events bubble
+up past `.messages` to the page. Fixed by containing scroll at each level
+(`html`/`body`, `.app-shell`, `.sidebar`, `.main`) so only the intended
+region — the message list, or the sidebar's room list — scrolls on its own.
+
 ## What's deliberately not built
 
 To match the stated scale (<500 users, one class) and avoid infrastructure

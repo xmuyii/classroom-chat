@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware');
+const { notifyAdmins } = require('../ws');
 
 const router = express.Router();
 
@@ -112,14 +113,37 @@ router.get('/:roomId/messages', requireAuth, async (req, res) => {
   const limit = 50;
 
   const { rows } = await db.query(
-    `SELECT m.id, m.body, m.saved, m.created_at, m.sender_id, u.username AS sender
+    `SELECT m.id, m.body, m.saved, m.flagged, m.created_at, m.sender_id, u.username AS sender
      FROM messages m JOIN users u ON u.id = m.sender_id
-     WHERE m.room_id = $1 ${before ? 'AND m.id < $3' : ''}
+     WHERE m.room_id = $1 AND m.status = 'visible' ${before ? 'AND m.id < $3' : ''}
      ORDER BY m.id DESC LIMIT $2`,
     before ? [roomId, limit, before] : [roomId, limit]
   );
 
   res.json({ messages: rows.reverse() });
+});
+
+// A student flags a message for the teacher's attention. The message stays
+// visible (flagging happens after the fact) — this just surfaces it in the
+// admin's moderation queue.
+router.post('/:roomId/messages/:messageId/flag', requireAuth, async (req, res) => {
+  const { roomId, messageId } = req.params;
+  if (!(await isMember(roomId, req.session.userId))) {
+    return res.status(403).json({ error: 'You do not have access to this room.', code: 'not_a_member' });
+  }
+  const { rows: roomRows } = await db.query('SELECT type, name FROM rooms WHERE id = $1', [roomId]);
+  if (!roomRows.length || roomRows[0].type !== 'group') {
+    return res.status(400).json({ error: 'Flagging is only available in group rooms.' });
+  }
+  const { rows } = await db.query(
+    'UPDATE messages SET flagged = TRUE WHERE id = $1 AND room_id = $2 RETURNING id',
+    [messageId, roomId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Message not found.' });
+
+  notifyAdmins({ type: 'moderation_alert', reason: 'flagged', roomId, roomName: roomRows[0].name, sender: req.session.username });
+
+  res.json({ ok: true });
 });
 
 // List members of a room — only visible to members themselves, so someone

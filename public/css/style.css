@@ -15,9 +15,17 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute is only display:none by default at the same
+   specificity as an ordinary class rule, so any class that also sets
+   display (like .main, .composer, .onboarding-overlay below) can silently
+   override it and leave a "hidden" element fully visible and blocking
+   clicks. This makes hidden win unconditionally, everywhere. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   margin: 0;
+  overflow: hidden; /* the app owns its own internal scroll regions below */
 }
 
 body {
@@ -219,6 +227,7 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   height: 100%;
   display: grid;
   grid-template-columns: 260px 1fr;
+  min-height: 0;
 }
 
 @media (max-width: 720px) {
@@ -231,7 +240,15 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
-  padding: 20px 0;
+  padding: 20px 0 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .sidebar-header {
@@ -286,6 +303,8 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main-header {
@@ -301,6 +320,7 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 24px;
   display: flex;
@@ -382,6 +402,8 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   padding: 24px;
   max-width: 560px;
   overflow-y: auto;
+  min-height: 0;
+  flex: 1;
 }
 
 .settings-section {
@@ -559,6 +581,81 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
   background: var(--hairline);
 }
 .onboarding-dots span.active { background: var(--yellow); }
+
+.mod-dot {
+  display: block;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--coral);
+  margin-left: 6px;
+}
+
+.mod-subhead {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+
+.mod-item {
+  padding: 10px 12px;
+  background: var(--panel-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.mod-item-meta {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin-bottom: 5px;
+}
+.mod-item-body {
+  font-size: 14px;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+.mod-item-actions {
+  display: flex;
+  gap: 8px;
+}
+.mod-item-actions button {
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+.mod-item-actions button.approve {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+.mod-item-actions button.reject,
+.mod-item-actions button.delete {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.msg-bubble.pending {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.msg-pending-label {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 3px;
+}
+
+.msg-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.flag-btn, .delete-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.flag-btn.active { color: var(--coral); }
+.delete-btn:hover { color: var(--danger); }
 
 .toast {
   position: fixed;

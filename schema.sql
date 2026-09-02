@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS messages (
   saved      BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 'visible' (normal), 'pending' (held by the word filter, awaiting an admin's
+-- approve/reject), 'flagged' is tracked separately below since a flagged
+-- message has already been seen and stays visible until an admin acts.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'visible';
+-- Set by a student's "flag to teacher" action. The message is still visible
+-- (flagging happens after the fact) — this just surfaces it for admin review.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS flagged BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, id);
 -- Used by the sweeper to find expired, unsaved group messages fast.
 CREATE INDEX IF NOT EXISTS idx_messages_sweep ON messages(room_id, saved, created_at);

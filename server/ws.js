@@ -1,12 +1,13 @@
 const { WebSocketServer } = require('ws');
 const db = require('./db');
+const { containsBlockedWord } = require('./moderation');
 
 // room_id -> Set of { ws, userId, username }
 const roomSockets = new Map();
 
-// user_id -> Set of { ws, username, myEntries } — lets admin actions push
-// live updates (e.g. "you were just added to a room") to a user's open
-// connection(s) without waiting for them to refresh.
+// user_id -> Set of { ws, username, isAdmin, myEntries } — lets admin
+// actions and moderation events push live updates to a user's open
+// connection(s) directly, without waiting for them to refresh.
 const userConnections = new Map();
 
 function addSocket(roomId, entry) {
@@ -30,25 +31,53 @@ function broadcast(roomId, payload, exceptWs) {
   }
 }
 
-// Called by the sweeper when it hard-deletes expired group messages, so any
-// open tab removes them live instead of only noticing on next reload.
+// Sends a payload to every currently-open socket for one specific user
+// (e.g. telling a student their held message was rejected).
+function notifyUser(userId, payload) {
+  const conns = userConnections.get(userId);
+  if (!conns) return;
+  const data = JSON.stringify(payload);
+  for (const conn of conns) {
+    if (conn.ws.readyState === conn.ws.OPEN) conn.ws.send(data);
+  }
+}
+
+// Sends a payload to every currently-connected admin (e.g. "a message needs review").
+function notifyAdmins(payload) {
+  const data = JSON.stringify(payload);
+  for (const conns of userConnections.values()) {
+    for (const conn of conns) {
+      if (conn.isAdmin && conn.ws.readyState === conn.ws.OPEN) conn.ws.send(data);
+    }
+  }
+}
+
+// Broadcasts a newly-visible message to a room (used for normal sends and
+// for messages an admin approves out of the moderation queue).
+function broadcastNewMessage(roomId, message) {
+  broadcast(roomId, { type: 'message', roomId, message });
+}
+
+// Broadcasts that one or more messages should be removed from view —
+// used by the sweeper, admin instant-delete, and rejected-message cleanup.
+function broadcastMessagesDeleted(roomId, ids) {
+  broadcast(roomId, { type: 'messages_deleted', roomId, ids });
+}
+
+// Called by the sweeper when it hard-deletes expired group messages.
 function notifyDeleted(deletedRows) {
   const byRoom = new Map();
   for (const row of deletedRows) {
     if (!byRoom.has(row.room_id)) byRoom.set(row.room_id, []);
     byRoom.get(row.room_id).push(row.id);
   }
-  for (const [roomId, ids] of byRoom) {
-    broadcast(roomId, { type: 'messages_deleted', roomId, ids });
-  }
+  for (const [roomId, ids] of byRoom) broadcastMessagesDeleted(roomId, ids);
 }
 
-// Called by the admin "add member" route. Subscribes any currently-open
-// sockets for that user to the new room's live fan-out, and tells the
-// client so it can update its sidebar without a page reload.
+// Called by the admin "add member" route.
 function notifyRoomMembershipAdded(userId, room) {
   const conns = userConnections.get(userId);
-  if (!conns) return; // user isn't currently connected — they'll pick it up on next login/reconnect
+  if (!conns) return;
   for (const conn of conns) {
     const entry = { ws: conn.ws, userId, username: conn.username };
     addSocket(room.id, entry);
@@ -59,7 +88,7 @@ function notifyRoomMembershipAdded(userId, room) {
   }
 }
 
-// Called by the admin "remove member" route. Mirror of the above.
+// Called by the admin "remove member" route.
 function notifyRoomMembershipRemoved(userId, roomId) {
   const conns = userConnections.get(userId);
   if (!conns) return;
@@ -89,17 +118,22 @@ async function sendCatchUp(ws, userId, roomIds) {
     );
     const since = cursorRows[0] ? cursorRows[0].last_message_id : 0;
 
+    // A user's own held-for-review messages are included in their own
+    // catch-up (so they still see their pending message after reconnecting);
+    // everyone else's catch-up only ever includes 'visible' messages.
     // eslint-disable-next-line no-await-in-loop
     const { rows: missed } = await db.query(
-      `SELECT m.id, m.body, m.saved, m.created_at, m.sender_id, u.username AS sender
+      `SELECT m.id, m.body, m.saved, m.flagged, m.status, m.created_at, m.sender_id, u.username AS sender
        FROM messages m JOIN users u ON u.id = m.sender_id
        WHERE m.room_id = $1 AND m.id > $2
+         AND (m.status = 'visible' OR (m.status = 'pending' AND m.sender_id = $3))
        ORDER BY m.id ASC LIMIT 500`,
-      [roomId, since]
+      [roomId, since, userId]
     );
 
     if (missed.length) {
-      ws.send(JSON.stringify({ type: 'backlog', roomId, messages: missed }));
+      const messages = missed.map((m) => ({ ...m, pending: m.status === 'pending' }));
+      ws.send(JSON.stringify({ type: 'backlog', roomId, messages }));
       const maxId = missed[missed.length - 1].id;
       // eslint-disable-next-line no-await-in-loop
       await db.query(
@@ -130,8 +164,6 @@ function attachWebSocketServer(server, sessionParser) {
   // Heartbeat: proxies (Railway's included) silently drop idle WebSocket
   // connections without sending either side a close frame. Without this,
   // readyState stays OPEN on a dead socket forever and sends just vanish.
-  // Pinging every 30s and terminating anything that didn't pong back forces
-  // a real close event, which triggers the client's reconnect logic.
   const HEARTBEAT_MS = 30000;
   wss.on('connection', (ws) => {
     ws.isAlive = true;
@@ -152,9 +184,10 @@ function attachWebSocketServer(server, sessionParser) {
     ws.on('pong', () => { ws.isAlive = true; });
     const userId = req.session.userId;
     const username = req.session.username;
+    const isAdmin = !!req.session.isAdmin;
     const myEntries = new Map(); // roomId -> entry
 
-    const conn = { ws, username, myEntries };
+    const conn = { ws, username, isAdmin, myEntries };
     if (!userConnections.has(userId)) userConnections.set(userId, new Set());
     userConnections.get(userId).add(conn);
 
@@ -186,25 +219,44 @@ function attachWebSocketServer(server, sessionParser) {
         if (!roomId || !body || !body.trim() || !myEntries.has(roomId)) return;
         const text = body.trim().slice(0, 4000);
         try {
+          const blocked = containsBlockedWord(text);
+          const status = blocked ? 'pending' : 'visible';
           const { rows } = await db.query(
-            `INSERT INTO messages (room_id, sender_id, body) VALUES ($1, $2, $3)
+            `INSERT INTO messages (room_id, sender_id, body, status) VALUES ($1, $2, $3, $4)
              RETURNING id, body, saved, created_at`,
-            [roomId, userId, text]
+            [roomId, userId, text, status]
           );
           const saved = rows[0];
-          const payload = {
-            type: 'message',
-            roomId,
-            message: {
-              id: saved.id,
-              body: saved.body,
-              saved: saved.saved,
-              created_at: saved.created_at,
-              sender_id: userId,
-              sender: username,
-            },
+          const messagePayload = {
+            id: saved.id,
+            body: saved.body,
+            saved: saved.saved,
+            created_at: saved.created_at,
+            sender_id: userId,
+            sender: username,
+            flagged: false,
           };
-          broadcast(roomId, payload);
+
+          if (blocked) {
+            // Held for review — only the sender sees their own copy, marked
+            // pending, until an admin approves or rejects it.
+            if (ws.readyState === ws.OPEN) {
+              ws.send(JSON.stringify({ type: 'message', roomId, message: { ...messagePayload, pending: true } }));
+            }
+            const { rows: roomRows } = await db.query('SELECT name FROM rooms WHERE id = $1', [roomId]);
+            notifyAdmins({
+              type: 'moderation_alert',
+              reason: 'pending',
+              roomId,
+              roomName: roomRows[0] ? roomRows[0].name : '',
+              sender: username,
+            });
+          } else {
+            broadcastNewMessage(roomId, messagePayload);
+          }
+
+          // The sender's own cursor advances either way — they've "read"
+          // their own message the moment they sent it.
           await db.query(
             `INSERT INTO read_cursors (user_id, room_id, last_message_id) VALUES ($1, $2, $3)
              ON CONFLICT (user_id, room_id) DO UPDATE SET last_message_id = GREATEST(read_cursors.last_message_id, EXCLUDED.last_message_id)`,
@@ -218,8 +270,6 @@ function attachWebSocketServer(server, sessionParser) {
         if (!roomId || !myEntries.has(roomId)) return;
         broadcast(roomId, { type: 'typing', roomId, username }, ws);
       } else if (msg.type === 'ack') {
-        // Client confirms it has rendered up to a given message id — advances
-        // its own cursor so a later reconnect only re-sends what's truly new.
         const { roomId, messageId } = msg;
         if (!roomId || !messageId || !myEntries.has(roomId)) return;
         db.query(
@@ -246,4 +296,8 @@ module.exports = {
   notifyDeleted,
   notifyRoomMembershipAdded,
   notifyRoomMembershipRemoved,
+  notifyUser,
+  notifyAdmins,
+  broadcastNewMessage,
+  broadcastMessagesDeleted,
 };

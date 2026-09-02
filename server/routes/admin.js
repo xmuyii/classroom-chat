@@ -1,7 +1,13 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware');
-const { notifyRoomMembershipAdded, notifyRoomMembershipRemoved } = require('../ws');
+const {
+  notifyRoomMembershipAdded,
+  notifyRoomMembershipRemoved,
+  notifyUser,
+  broadcastNewMessage,
+  broadcastMessagesDeleted,
+} = require('../ws');
 
 const router = express.Router();
 
@@ -90,6 +96,86 @@ router.patch('/rooms/:roomId', requireAuth, requireAdmin, async (req, res) => {
   );
   if (!rows.length) return res.status(404).json({ error: 'No such room.' });
   res.json({ room: rows[0] });
+});
+
+// --- Moderation ---------------------------------------------------------
+
+// Messages the word filter held before anyone but the sender saw them.
+router.get('/moderation/pending', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT m.id, m.body, m.created_at, r.id AS room_id, r.name AS room_name, u.username AS sender
+     FROM messages m
+     JOIN rooms r ON r.id = m.room_id
+     JOIN users u ON u.id = m.sender_id
+     WHERE m.status = 'pending'
+     ORDER BY m.id ASC`
+  );
+  res.json({ items: rows });
+});
+
+// Let it through — becomes visible to the room, same as any normal message.
+router.post('/moderation/:messageId/approve', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE messages SET status = 'visible'
+     WHERE id = $1 AND status = 'pending'
+     RETURNING id, room_id, body, saved, flagged, created_at, sender_id`,
+    [req.params.messageId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found, or already resolved.' });
+  const m = rows[0];
+  const { rows: userRows } = await db.query('SELECT username FROM users WHERE id = $1', [m.sender_id]);
+  broadcastNewMessage(m.room_id, {
+    id: m.id, body: m.body, saved: m.saved, flagged: m.flagged, created_at: m.created_at,
+    sender_id: m.sender_id, sender: userRows[0] ? userRows[0].username : 'Unknown',
+  });
+  res.json({ ok: true });
+});
+
+// Discard it — nobody but the sender ever saw it, and their own copy is removed too.
+router.post('/moderation/:messageId/reject', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    "DELETE FROM messages WHERE id = $1 AND status = 'pending' RETURNING id, room_id, sender_id",
+    [req.params.messageId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found, or already resolved.' });
+  const m = rows[0];
+  notifyUser(m.sender_id, { type: 'messages_deleted', roomId: m.room_id, ids: [m.id] });
+  res.json({ ok: true });
+});
+
+// Messages students have flagged — already visible, awaiting a decision.
+router.get('/moderation/flagged', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT m.id, m.body, m.created_at, r.id AS room_id, r.name AS room_name, u.username AS sender
+     FROM messages m
+     JOIN rooms r ON r.id = m.room_id
+     JOIN users u ON u.id = m.sender_id
+     WHERE m.flagged = TRUE AND m.status = 'visible'
+     ORDER BY m.id DESC LIMIT 50`
+  );
+  res.json({ items: rows });
+});
+
+// Clears a flag without deleting the message.
+router.post('/moderation/:messageId/dismiss-flag', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    'UPDATE messages SET flagged = FALSE WHERE id = $1 RETURNING id',
+    [req.params.messageId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found.' });
+  res.json({ ok: true });
+});
+
+// Instant delete for any message — used both from the in-chat delete button
+// and from the flagged-queue "Delete" action. Removes it for everyone live.
+router.delete('/messages/:messageId', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await db.query(
+    'DELETE FROM messages WHERE id = $1 RETURNING id, room_id',
+    [req.params.messageId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Message not found.' });
+  broadcastMessagesDeleted(rows[0].room_id, [rows[0].id]);
+  res.json({ ok: true });
 });
 
 module.exports = router;

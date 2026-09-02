@@ -238,6 +238,12 @@ function appendMessage(roomId, m) {
   const empty = container.querySelector('.empty-state');
   if (empty) empty.remove();
 
+  // Dedupe: a message can arrive twice for the same id (e.g. a held message
+  // was rendered locally as pending, then re-broadcast once an admin
+  // approves it) — replace rather than duplicate.
+  const existing = container.querySelector(`.msg-row[data-id="${m.id}"]`);
+  if (existing) existing.remove();
+
   const mine = m.sender_id === me.id || m.sender === me.username;
   const row = document.createElement('div');
   row.className = `msg-row ${mine ? 'mine' : 'theirs'}`;
@@ -250,14 +256,28 @@ function appendMessage(roomId, m) {
   row.appendChild(meta);
 
   const bubble = document.createElement('div');
-  bubble.className = `msg-bubble ${m.saved ? 'saved' : ''}`;
+  bubble.className = `msg-bubble ${m.saved ? 'saved' : ''} ${m.pending ? 'pending' : ''}`;
   bubble.textContent = m.body;
+  row.appendChild(bubble);
+
+  if (m.pending) {
+    const label = document.createElement('div');
+    label.className = 'msg-pending-label';
+    label.textContent = 'Awaiting review \u2014 only you can see this until it\u2019s approved.';
+    row.appendChild(label);
+    container.appendChild(row);
+    return; // no save/flag/delete actions on a message that isn't visible yet
+  }
 
   const isGroup = !!findGroupRoom(roomId);
   if (isGroup) {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+
     const star = document.createElement('button');
     star.className = `save-star ${m.saved ? 'active' : ''}`;
-    star.textContent = m.saved ? '\u2605 saved \u2014 stays past 9 days' : '\u2606 save this message';
+    star.textContent = m.saved ? '\u2605 saved' : '\u2606 save';
+    star.title = m.saved ? 'Saved \u2014 stays past 9 days' : 'Save this message so it stays past 9 days';
     star.onclick = async () => {
       const nowSaved = !bubble.classList.contains('saved');
       try {
@@ -267,15 +287,48 @@ function appendMessage(roomId, m) {
         });
         bubble.classList.toggle('saved', nowSaved);
         star.classList.toggle('active', nowSaved);
-        star.textContent = nowSaved ? '\u2605 saved \u2014 stays past 9 days' : '\u2606 save this message';
+        star.textContent = nowSaved ? '\u2605 saved' : '\u2606 save';
       } catch (err) {
         toast(err.message);
       }
     };
-    row.appendChild(bubble);
-    row.appendChild(star);
-  } else {
-    row.appendChild(bubble);
+    actions.appendChild(star);
+
+    if (!mine) {
+      const flagBtn = document.createElement('button');
+      flagBtn.className = `flag-btn ${m.flagged ? 'active' : ''}`;
+      flagBtn.textContent = m.flagged ? '\u2691 reported' : '\u2690 report to teacher';
+      flagBtn.disabled = !!m.flagged;
+      flagBtn.onclick = async () => {
+        try {
+          await api(`/api/rooms/${roomId}/messages/${m.id}/flag`, { method: 'POST' });
+          flagBtn.textContent = '\u2691 reported';
+          flagBtn.classList.add('active');
+          flagBtn.disabled = true;
+          toast('Reported to your teacher.');
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      actions.appendChild(flagBtn);
+    }
+
+    if (me.isAdmin) {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = 'delete';
+      delBtn.onclick = async () => {
+        if (!confirm('Delete this message for everyone?')) return;
+        try {
+          await api(`/api/admin/messages/${m.id}`, { method: 'DELETE' });
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      actions.appendChild(delBtn);
+    }
+
+    row.appendChild(actions);
   }
 
   container.appendChild(row);
@@ -340,6 +393,12 @@ function connectWS() {
       if (existing) existing.isMember = false;
       renderNav();
       if (currentRoomId === msg.roomId) selectRoom(currentRoomId);
+    } else if (msg.type === 'moderation_alert') {
+      if (me.isAdmin) {
+        document.getElementById('settings-dot').hidden = false;
+        const reasonText = msg.reason === 'flagged' ? 'A message was flagged' : 'A message needs review';
+        toast(`${reasonText} in ${msg.roomName || 'a room'}.`);
+      }
     }
   };
 
@@ -544,7 +603,76 @@ async function openSettings() {
     section.hidden = true;
   }
 
-  if (me.isAdmin) await refreshAdminRoomPickers();
+  if (me.isAdmin) {
+    document.getElementById('settings-dot').hidden = true;
+    document.getElementById('moderation-section').hidden = false;
+    await loadModerationQueues();
+    await refreshAdminRoomPickers();
+  }
+}
+
+async function loadModerationQueues() {
+  const [pending, flagged] = await Promise.all([
+    api('/api/admin/moderation/pending'),
+    api('/api/admin/moderation/flagged'),
+  ]);
+
+  const pendingList = document.getElementById('mod-pending-list');
+  pendingList.innerHTML = '';
+  if (!pending.items.length) {
+    pendingList.innerHTML = '<div class="hint-text">Nothing waiting.</div>';
+  } else {
+    for (const item of pending.items) {
+      const el = document.createElement('div');
+      el.className = 'mod-item';
+      el.innerHTML = `
+        <div class="mod-item-meta">${item.sender} \u00b7 ${item.room_name} \u00b7 ${new Date(item.created_at).toLocaleString()}</div>
+        <div class="mod-item-body"></div>
+        <div class="mod-item-actions">
+          <button class="approve">Approve</button>
+          <button class="reject">Reject</button>
+        </div>`;
+      el.querySelector('.mod-item-body').textContent = item.body;
+      el.querySelector('.approve').onclick = async () => {
+        try { await api(`/api/admin/moderation/${item.id}/approve`, { method: 'POST' }); loadModerationQueues(); }
+        catch (err) { toast(err.message); }
+      };
+      el.querySelector('.reject').onclick = async () => {
+        try { await api(`/api/admin/moderation/${item.id}/reject`, { method: 'POST' }); loadModerationQueues(); }
+        catch (err) { toast(err.message); }
+      };
+      pendingList.appendChild(el);
+    }
+  }
+
+  const flaggedList = document.getElementById('mod-flagged-list');
+  flaggedList.innerHTML = '';
+  if (!flagged.items.length) {
+    flaggedList.innerHTML = '<div class="hint-text">Nothing flagged.</div>';
+  } else {
+    for (const item of flagged.items) {
+      const el = document.createElement('div');
+      el.className = 'mod-item';
+      el.innerHTML = `
+        <div class="mod-item-meta">${item.sender} \u00b7 ${item.room_name} \u00b7 ${new Date(item.created_at).toLocaleString()}</div>
+        <div class="mod-item-body"></div>
+        <div class="mod-item-actions">
+          <button class="dismiss">Dismiss</button>
+          <button class="delete">Delete</button>
+        </div>`;
+      el.querySelector('.mod-item-body').textContent = item.body;
+      el.querySelector('.dismiss').onclick = async () => {
+        try { await api(`/api/admin/moderation/${item.id}/dismiss-flag`, { method: 'POST' }); loadModerationQueues(); }
+        catch (err) { toast(err.message); }
+      };
+      el.querySelector('.delete').onclick = async () => {
+        if (!confirm('Delete this message for everyone?')) return;
+        try { await api(`/api/admin/messages/${item.id}`, { method: 'DELETE' }); loadModerationQueues(); }
+        catch (err) { toast(err.message); }
+      };
+      flaggedList.appendChild(el);
+    }
+  }
 }
 
 async function wireAdminPanel() {

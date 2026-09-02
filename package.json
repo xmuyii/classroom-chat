@@ -11,6 +11,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "bad-words": "^3.0.4",
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^9.0.1",
     "cookie": "^0.6.0",
