@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware');
-const { notifyAdmins } = require('../ws');
+const { notifyAdmins, isOnline } = require('../ws');
 
 const router = express.Router();
 
@@ -160,7 +160,7 @@ router.get('/:roomId/members', requireAuth, async (req, res) => {
      WHERE rm.room_id = $1 ORDER BY u.username`,
     [roomId]
   );
-  res.json({ members: rows });
+  res.json({ members: rows.map((m) => ({ ...m, online: isOnline(m.id) })) });
 });
 
 // Toggle the "saved" flag — exempts a group message from the 9-day sweep.

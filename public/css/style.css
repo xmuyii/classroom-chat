@@ -476,8 +476,18 @@ input::placeholder, textarea::placeholder { color: #6B7A70; }
 .member-row {
   padding: 7px 18px;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .member-row.you { color: var(--yellow); }
+
+.presence-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+.presence-dot.online { background: #6FBF7A; }
 
 .room-member-row {
   display: flex;

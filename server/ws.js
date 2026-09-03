@@ -31,6 +31,12 @@ function broadcast(roomId, payload, exceptWs) {
   }
 }
 
+// Whether a user currently has at least one open WebSocket connection.
+function isOnline(userId) {
+  const conns = userConnections.get(userId);
+  return !!conns && conns.size > 0;
+}
+
 // Sends a payload to every currently-open socket for one specific user
 // (e.g. telling a student their held message was rejected).
 function notifyUser(userId, payload) {
@@ -300,4 +306,5 @@ module.exports = {
   notifyAdmins,
   broadcastNewMessage,
   broadcastMessagesDeleted,
+  isOnline,
 };

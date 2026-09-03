@@ -7,6 +7,7 @@ const {
   notifyUser,
   broadcastNewMessage,
   broadcastMessagesDeleted,
+  isOnline,
 } = require('../ws');
 
 const router = express.Router();
@@ -49,7 +50,7 @@ router.get('/rooms/:roomId/members', requireAuth, requireAdmin, async (req, res)
      WHERE rm.room_id = $1 ORDER BY u.username`,
     [req.params.roomId]
   );
-  res.json({ members: rows });
+  res.json({ members: rows.map((m) => ({ ...m, online: isOnline(m.id) })) });
 });
 
 // Add a user to a room by username.
@@ -86,13 +87,31 @@ router.delete('/rooms/:roomId/members/:username', requireAuth, requireAdmin, asy
   res.json({ ok: true });
 });
 
-// Set (or clear) a room's pinned project topic/brief.
+// Update a room's name and/or its pinned project topic/brief.
 router.patch('/rooms/:roomId', requireAuth, requireAdmin, async (req, res) => {
   const { roomId } = req.params;
-  const { description } = req.body || {};
+  const { name, description } = req.body || {};
+
+  const sets = [];
+  const values = [];
+  let i = 1;
+
+  if (typeof name === 'string') {
+    const trimmed = name.trim();
+    if (!trimmed) return res.status(400).json({ error: 'Room name cannot be empty.' });
+    sets.push(`name = $${i++}`);
+    values.push(trimmed.slice(0, 80));
+  }
+  if (typeof description === 'string' || description === null) {
+    sets.push(`description = $${i++}`);
+    values.push(description ? description.trim().slice(0, 300) : null);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+
+  values.push(roomId);
   const { rows } = await db.query(
-    "UPDATE rooms SET description = $1 WHERE id = $2 AND type = 'group' RETURNING id, name, description",
-    [description ? description.trim().slice(0, 300) : null, roomId]
+    `UPDATE rooms SET ${sets.join(', ')} WHERE id = $${i} AND type = 'group' RETURNING id, name, description`,
+    values
   );
   if (!rows.length) return res.status(404).json({ error: 'No such room.' });
   res.json({ room: rows[0] });

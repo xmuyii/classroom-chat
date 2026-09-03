@@ -142,6 +142,19 @@ automatically on next boot and is safe against an existing `rooms` table.
   within a few signups. Login and password-recovery remain tightly rate
   limited, since those are the actual brute-force-sensitive paths.
 
+## Presence and editing a room
+
+- **Who's online.** Opening "View members" on any room (or the member list
+  in Settings → rooms & classes, for admins) now shows a small dot next to
+  each name — lit if they currently have the app open, dim if not. This is
+  tucked inside the member panel rather than shown on the main chat screen,
+  so it stays available for oversight without turning into a visible
+  "online now" badge that creates social pressure among the kids.
+- **Renaming a room / editing its topic.** Settings → "Admin: rooms &
+  classes" → pick a room from the dropdown → its name and topic populate
+  automatically → edit either (or both) → "Save changes." Renaming doesn't
+  affect membership, message history, or anything else about the room.
+
 ## Moderation
 
 A full "hold every message for approval" model would turn the whole chat

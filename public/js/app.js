@@ -561,7 +561,13 @@ async function openMemberPanel() {
     for (const m of data.members) {
       const row = document.createElement('div');
       row.className = `member-row ${m.username === me.username ? 'you' : ''}`;
-      row.textContent = m.username === me.username ? `${m.username} (you)` : m.username;
+      const dot = document.createElement('span');
+      dot.className = `presence-dot ${m.online ? 'online' : ''}`;
+      dot.title = m.online ? 'Online now' : 'Offline';
+      const label = document.createElement('span');
+      label.textContent = m.username === me.username ? `${m.username} (you)` : m.username;
+      row.appendChild(dot);
+      row.appendChild(label);
       list.appendChild(row);
     }
     document.getElementById('member-panel').hidden = false;
@@ -729,14 +735,17 @@ async function wireAdminPanel() {
     }
   };
 
-  document.getElementById('save-topic-btn').onclick = async () => {
+  document.getElementById('save-room-btn').onclick = async () => {
     const roomId = document.getElementById('admin-room-select').value;
     if (!roomId) return;
+    const name = document.getElementById('room-name-input').value.trim();
     const description = document.getElementById('room-topic-input').value.trim();
+    if (!name) { toast('Room name can\u2019t be empty.'); return; }
     try {
-      await api(`/api/admin/rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify({ description }) });
-      toast('Topic saved.');
+      await api(`/api/admin/rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify({ name, description }) });
+      toast('Saved.');
       await loadRooms();
+      await refreshAdminRoomPickers();
       if (currentRoomId === roomId) selectRoom(roomId);
     } catch (err) {
       toast(err.message);
@@ -746,6 +755,7 @@ async function wireAdminPanel() {
   document.getElementById('admin-room-select').addEventListener('change', (e) => {
     renderRoomMemberList(e.target.value);
     const room = findGroupRoom(e.target.value);
+    document.getElementById('room-name-input').value = (room && room.name) || '';
     document.getElementById('room-topic-input').value = (room && room.description) || '';
   });
 }
@@ -769,6 +779,7 @@ async function refreshAdminRoomPickers() {
   if (roomSelect.value) {
     await renderRoomMemberList(roomSelect.value);
     const room = findGroupRoom(roomSelect.value);
+    document.getElementById('room-name-input').value = (room && room.name) || '';
     document.getElementById('room-topic-input').value = (room && room.description) || '';
   }
 }
